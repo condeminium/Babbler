@@ -1,11 +1,11 @@
-========
+
 Babbler
-========
+--------
 Babbler is a self learning markov style chatbot. It learns language patterns by associating words in user input with previous responses and saves them to a memory file stored on disk.
 
-=========
+
 Features
-=========
+------------
 Word assosciation
 
 Memory Saving
@@ -14,9 +14,9 @@ Memory pruning
 
 Text to speech (optional)
 
-==========
+
 Components
-==========
+-----------
 Babbler consists of four primary components:
 
 TTSHandler: Manages async audio output via pyttsx3. Creates new threads for audio generation so that text render is never blocked by TTS.
@@ -27,9 +27,8 @@ MemoryBank & StorageHandler: Handles state management and disk serialization (me
 
 Babbler: The main loop
 
-============
 Requirements
-============
+----------------
 Python: 3.8+
 
 Dependencies:
@@ -37,9 +36,8 @@ Dependencies:
 pyttsx3 (optional but required for TTS)
 
 
-========
 Commands
-========
+------------
 
 #help – Displays the command menu.
 
@@ -47,9 +45,9 @@ Commands
 
 #quit – Saves current memory state to disk and exits.
 
-=============
+
 Configuration
-=============
+---------------
 You can customize the Babbler instance parameters directly at the bottom of the file inside if __name__ == "__main__"::
 
 Python

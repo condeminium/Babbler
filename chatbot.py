@@ -4,6 +4,47 @@ import pickle
 import random
 from typing import Dict, List, Optional
 
+try:
+    import pyttsx3
+    HAS_PYTTSX3 = True
+except ImportError:
+    HAS_PYTTSX3 = False
+
+
+class TTSHandler:
+    """Handles text-to-speech engine initialization and audio playback."""
+
+    def __init__(self, enabled: bool = True, rate: int = 175, volume: float = 1.0):
+        self.enabled = enabled and HAS_PYTTSX3
+        self.engine = None
+
+        if not HAS_PYTTSX3 and enabled:
+            print("[Warning] 'pyttsx3' module not found. Run 'pip install pyttsx3' to enable TTS.")
+
+        if self.enabled:
+            try:
+                self.engine = pyttsx3.init()
+                self.engine.setProperty("rate", rate)      # Speech speed (words per min)
+                self.engine.setProperty("volume", volume)  # Volume (0.0 to 1.0)
+            except Exception as e:
+                print(f"[Warning] Failed to initialize TTS engine: {e}")
+                self.enabled = False
+
+    def speak(self, text: str) -> None:
+        """Speak the given string if TTS is enabled and text is printable."""
+        if not self.enabled or not self.engine:
+            return
+        
+        # Don't speak ellipsis or placeholder responses
+        if text.strip() in ("...", ""):
+            return
+
+        try:
+            self.engine.say(text)
+            self.engine.runAndWait()
+        except Exception as e:
+            print(f"[TTS Error] {e}")
+
 
 class WordNode:
     """Tracks a single word entry and its reply associations."""
@@ -49,9 +90,7 @@ class StorageHandler:
             print("Memory file loaded.")
             return memory
         except Exception as error:
-            print(
-                f"Error loading memory file ({error}). Starting empty."
-            )
+            print(f"Error loading memory file ({error}). Starting empty.")
             return {}
 
     def save(self, memory: Dict[str, WordNode]) -> None:
@@ -118,9 +157,13 @@ class MemoryBank:
 
 
 class Babbler:
-    """Manages bot execution loop, terminal I/O, and runtime state."""
+    """Manages bot execution loop, terminal I/O, speech, and runtime state."""
 
-    HELP_MESSAGE = "Commands:\n  #help - Display help\n  #quit - Save and exit\n"
+    HELP_MESSAGE = """Commands:
+  #help - Display help
+  #tts  - Toggle Text-to-Speech on/off
+  #quit - Save and exit
+"""
 
     def __init__(
         self,
@@ -130,6 +173,7 @@ class Babbler:
         max_words: int = 1000,
         max_responses_per_word: int = 15,
         deduplicate: bool = True,
+        enable_tts: bool = True,
     ):
         self.auto_save = auto_save
         self.save_interval = save_interval
@@ -144,6 +188,7 @@ class Babbler:
             max_responses_per_word=max_responses_per_word,
             deduplicate=deduplicate,
         )
+        self.tts = TTSHandler(enabled=enable_tts)
 
     @staticmethod
     def _clear_screen() -> None:
@@ -170,6 +215,10 @@ class Babbler:
                         break
                     elif "#help" in cmd:
                         print(self.HELP_MESSAGE)
+                    elif "#tts" in cmd:
+                        self.tts.enabled = not self.tts.enabled
+                        state = "enabled" if self.tts.enabled else "disabled"
+                        print(f"TTS is now {state}.")
                     continue
 
                 input_tokens = raw_input.lower().split()
@@ -189,6 +238,10 @@ class Babbler:
                     " ".join(response_tokens) if response_tokens else "..."
                 )
                 print(f"Babbler: {answer}")
+
+                # Speak the response audio
+                self.tts.speak(answer)
+
                 previous_response_tokens = answer.split()
 
         finally:
@@ -196,5 +249,5 @@ class Babbler:
 
 
 if __name__ == "__main__":
-    bot = Babbler()
+    bot = Babbler(enable_tts=True)
     bot.talk()

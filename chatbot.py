@@ -3,6 +3,7 @@ import pathlib
 import pickle
 import random
 from typing import Dict, List, Optional
+import threading
 
 try:
     import pyttsx3
@@ -12,39 +13,39 @@ except ImportError:
 
 
 class TTSHandler:
-    """Handles text-to-speech engine initialization and audio playback."""
+    """Handles TTS initialisation and runs on separate thread to main loop."""
 
     def __init__(self, enabled: bool = True, rate: int = 175, volume: float = 1.0):
         self.enabled = enabled and HAS_PYTTSX3
-        self.engine = None
+        self.rate = rate
+        self.volume = volume
 
         if not HAS_PYTTSX3 and enabled:
             print("[Warning] 'pyttsx3' module not found. Run 'pip install pyttsx3' to enable TTS.")
 
-        if self.enabled:
-            try:
-                self.engine = pyttsx3.init()
-                self.engine.setProperty("rate", rate)      # Speech speed (words per min)
-                self.engine.setProperty("volume", volume)  # Volume (0.0 to 1.0)
-            except Exception as e:
-                print(f"[Warning] Failed to initialize TTS engine: {e}")
-                self.enabled = False
-
-    def speak(self, text: str) -> None:
-        """Speak the given string if TTS is enabled and text is printable."""
-        if not self.enabled or not self.engine:
-            return
-        
-        # Don't speak ellipsis or placeholder responses
-        if text.strip() in ("...", ""):
-            return
-
+    def _speak_thread(self, text: str) -> None:
+        """Instantiates TTS thread."""
         try:
-            self.engine.say(text)
-            self.engine.runAndWait()
+            engine = pyttsx3.init()
+            engine.setProperty("rate", self.rate)
+            engine.setProperty("volume", self.volume)
+            engine.say(text)
+            engine.runAndWait()
+            engine.stop()
         except Exception as e:
             print(f"[TTS Error] {e}")
 
+    def speak(self, text: str) -> None:
+        """Speak the string asynchronously if TTS is enabled and text is valid."""
+        if not self.enabled:
+            return
+
+        clean_text = text.strip()
+        if clean_text in ("...", ""):
+            return
+
+        thread = threading.Thread(target=self._speak_thread, args=(clean_text,), daemon=True)
+        thread.start()
 
 class WordNode:
     """Tracks a single word entry and its reply associations."""

@@ -1,8 +1,9 @@
 import random, pickle, os
 import os.path
-startmes = """Welcome Message
+help_message = """type #quit to quit"""
+welcome_message = """Welcome to Babbler bot. This bot will learn from your input and will atempt to form responses via dictionary assosciation. A lot of it will be babbling but it will sometimes speak with coherence! (type #help for more commands or #quit to exit and save)
 """
-class chatter():
+class babbler():
     def __init__(self, save, delete_duplicates, count, maximum_words, maximum_responses):
         self.save = save
         self.count = count
@@ -11,9 +12,10 @@ class chatter():
         self.maximum_responses = maximum_responses
         self.memory = {}
         self.wordcount = 0
-        self.sescount = 0
+        self.session_count = 0
         os.system("cls")
-        print(startmes)
+        os.system("clear")
+        print(welcome_message)
         if os.path.isfile("memory.data"): 
             self.memory = pickle.load(open('memory.data', "rb"))
             print("Memory file found")
@@ -25,21 +27,21 @@ class chatter():
     def question(self, x):
         self.wordcount += 1
         a = "w" + str(self.wordcount)
-        d = {"name": x, "resp": [x], "uses": 0}
+        d = {"name": x, "reply": [x], "uses": 0}
         self.memory[a] = d
     def talk(self):
         talking = True
-        prevres = ""
+        previous_response = ""
         while talking:
             if self.save:
-                self.sescount += 1
-                if self.sescount >= self.count:
-                    self.sescount = 0
+                self.session_count += 1
+                if self.session_count >= self.count:
+                    self.session_count = 0
                     pickle.dump(self.memory, open('memory.data', 'wb'))
                     print("Saving...")
             if self.delete_duplicates:
                 for key, value in self.memory.items():
-                    value["resp"] = list(set(value["resp"]))
+                    value["reply"] = list(set(value["reply"]))
             if len(self.memory.keys()) > self.maximum_words:
                 count = 0
                 for key, value in self.memory.items():
@@ -51,10 +53,10 @@ class chatter():
                             self.memory.pop(key, None)
                             break
             for key, value in self.memory.items():
-                if len(value["resp"]) > self.maximum_responses:
-                    rem = random.choice(value["resp"])
-                    value["resp"].remove(rem)    
-            res = "" 
+                if len(value["reply"]) > self.maximum_responses:
+                    rem = random.choice(value["reply"])
+                    value["reply"].remove(rem)    
+            answer = "" 
             a = input("You: ")
             if "#" in a:
                 if "quit" in a:
@@ -62,16 +64,16 @@ class chatter():
                     print("Saving...")
                     exit()
                 if "help" in a:
-                    print(helpmes)
+                    print(help_message)
                 a = ""
 
-            data = prevres.split(" ")
+            data = previous_response.split(" ")
             inp = a.split(" ")
 
             for x in data:
                 for key, value in self.memory.items():
                     if x == value["name"]:
-                        value["resp"].extend(inp)
+                        value["reply"].extend(inp)
             for x in inp:
                 if a == "":
                     break
@@ -85,11 +87,11 @@ class chatter():
                         if x == value["name"]:
                             xyz = random.randrange(0,4)
                             for i in range(xyz):
-                                res = res + " {0}".format(random.choice(value["resp"]))
+                                answer = answer + " {0}".format(random.choice(value["reply"]))
                                 value["uses"] += 1
-            if res == "":
-                res = " ..."
-            print("chatter:{0}".format(res))
-            prevres = res
-sauce = chatter(True, True, 25, 1000, 15)
-sauce.talk()
+            if answer == "":
+                answer = " ..."
+            print("Babbler:{0}".format(answer))
+            previous_response = answer
+run = babbler(True, True, 25, 1000, 15)
+run.talk()

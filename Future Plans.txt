@@ -1,3 +1,0 @@
-I would like to implement some sort of language structure function to assist the program with generating coherent sentences. This however could result in several pitfalls and would be very rigid in controlling output. Parsing user input into a specific sentence structure would limit the potential scope of accepted input. I am currently looking into linguistic and grammatical structure to see how I could program "the rules" of speech into something the program could compare its own output to and refactor its output to reflect natural speech.
-
-I made the first iteration of this 11 years ago before LLMs were as commonplace as they are in 2026. We are living in exciting times.

@@ -1,144 +1,198 @@
 import os
+import pathlib
 import pickle
 import random
+from typing import Dict, List, Optional
 
 
 class WordNode:
-    """Encapsulates a single word's learned association data and statistics."""
+    """Tracks a single word entry and its reply associations."""
 
-    def __init__(self, name: str):
-        self.name = name
-        self.reply = [name]
-        self.uses = 0
+    def __init__(self, name: str, initial_replies: Optional[List[str]] = None):
+        self.name: str = name
+        self.replies: List[str] = (
+            initial_replies if initial_replies is not None else [name]
+        )
+        self.uses: int = 0
 
-    def add_replies(self, words: list):
-        self.reply.extend(words)
+    def add_associations(self, words: List[str]) -> None:
+        self.replies.extend(words)
 
-    def deduplicate(self):
-        self.reply = list(set(self.reply))
+    def deduplicate(self) -> None:
+        self.replies = list(set(self.replies))
 
-    def prune_replies(self, max_responses: int):
-        if len(self.reply) > max_responses:
-            self.reply.remove(random.choice(self.reply))
+    def limit_replies(self, max_replies: int) -> None:
+        if len(self.replies) > max_replies:
+            self.replies = random.sample(self.replies, max_replies)
 
-    def generate_response(self) -> str:
-        count = random.randrange(0, 4)
-        selected_words = []
-        for _ in range(count):
-            if self.reply:
-                selected_words.append(random.choice(self.reply))
-                self.uses += 1
-        return " ".join(selected_words)
+    def generate_associations(self, max_samples: int = 3) -> List[str]:
+        if not self.replies:
+            return []
+        count = random.randint(0, max_samples)
+        self.uses += count
+        return [random.choice(self.replies) for _ in range(count)]
 
 
-class Babbler:
-    HELP_MESSAGE = "type #quit to quit\n"
-    WELCOME_MESSAGE = "Welcome to Babbler bot. Type #help for commands or #quit to exit.\n"
+class StorageHandler:
+    """Manages disk persistence via pickle."""
+
+    def __init__(self, file_path: pathlib.Path):
+        self.file_path = file_path
+
+    def load(self) -> Dict[str, WordNode]:
+        if not self.file_path.exists():
+            print("Memory file not found. Starting with fresh memory.")
+            return {}
+        try:
+            with open(self.file_path, "rb") as f:
+                memory = pickle.load(f)
+            print("Memory file loaded.")
+            return memory
+        except Exception as error:
+            print(
+                f"Error loading memory file ({error}). Starting empty."
+            )
+            return {}
+
+    def save(self, memory: Dict[str, WordNode]) -> None:
+        try:
+            with open(self.file_path, "wb") as f:
+                pickle.dump(memory, f)
+            print("Memory saved successfully.")
+        except Exception as error:
+            print(f"Error saving memory: {error}")
+
+
+class MemoryBank:
+    """Handles memory pruning and word associations."""
 
     def __init__(
         self,
-        save: bool = True,
-        delete_duplicates: bool = True,
+        storage_path: pathlib.Path,
+        max_words: int = 1000,
+        max_responses_per_word: int = 15,
+        deduplicate: bool = True,
+    ):
+        self.storage = StorageHandler(storage_path)
+        self.max_words = max_words
+        self.max_responses_per_word = max_responses_per_word
+        self.deduplicate = deduplicate
+        self.nodes: Dict[str, WordNode] = self.storage.load()
+
+    def get_or_create(self, word: str) -> WordNode:
+        if word not in self.nodes:
+            self.nodes[word] = WordNode(word)
+        return self.nodes[word]
+
+    def associate_words(
+        self, source_words: List[str], target_words: List[str]
+    ) -> None:
+        if not target_words:
+            return
+        for word in source_words:
+            if word in self.nodes:
+                self.nodes[word].add_associations(target_words)
+
+    def prune(self) -> None:
+        for node in self.nodes.values():
+            if self.deduplicate:
+                node.deduplicate()
+            node.limit_replies(self.max_responses_per_word)
+
+        if len(self.nodes) > self.max_words:
+            total_uses = sum(node.uses for node in self.nodes.values())
+            avg_uses = total_uses / len(self.nodes) if self.nodes else 0
+            candidates = [
+                word
+                for word, node in self.nodes.items()
+                if node.uses <= avg_uses
+            ]
+
+            for word in candidates:
+                if len(self.nodes) <= self.max_words:
+                    break
+                del self.nodes[word]
+
+    def save(self) -> None:
+        self.storage.save(self.nodes)
+
+
+class Babbler:
+    """Manages bot execution loop, terminal I/O, and runtime state."""
+
+    HELP_MESSAGE = "Commands:\n  #help - Display help\n  #quit - Save and exit\n"
+
+    def __init__(
+        self,
+        memory_file: str = "memory.data",
+        auto_save: bool = True,
         save_interval: int = 25,
         max_words: int = 1000,
-        max_responses: int = 15,
+        max_responses_per_word: int = 15,
+        deduplicate: bool = True,
     ):
-        self.save_enabled = save
-        self.delete_duplicates = delete_duplicates
+        self.auto_save = auto_save
         self.save_interval = save_interval
-        self.max_words = max_words
-        self.max_responses = max_responses
-
-        self.memory: dict[str, WordNode] = {}
         self.session_count = 0
 
+        self._clear_screen()
+        print("Babbler bot initialized.")
+
+        self.memory_bank = MemoryBank(
+            storage_path=pathlib.Path(memory_file),
+            max_words=max_words,
+            max_responses_per_word=max_responses_per_word,
+            deduplicate=deduplicate,
+        )
+
+    @staticmethod
+    def _clear_screen() -> None:
         os.system("cls" if os.name == "nt" else "clear")
-        print(self.WELCOME_MESSAGE)
-        self.load_memory()
 
-    def load_memory(self):
-        if os.path.isfile("memory.data"):
-            try:
-                with open("memory.data", "rb") as f:
-                    self.memory = pickle.load(f)
-                print("Memory file loaded successfully.")
-            except Exception as e:
-                print(f"Error loading memory: {e}")
-        else:
-            print("No memory file found. Initializing new memory bank.")
+    def talk(self) -> None:
+        previous_response_tokens: List[str] = []
 
-    def save_memory(self):
         try:
-            with open("memory.data", "wb") as f:
-                pickle.dump(self.memory, f)
-            print("Saving memory...")
-        except Exception as e:
-            print(f"Error saving memory: {e}")
+            while True:
+                if self.auto_save:
+                    self.session_count += 1
+                    if self.session_count >= self.save_interval:
+                        self.session_count = 0
+                        self.memory_bank.save()
 
-    def prune_memory(self):
-        # Clean duplicate and over-capacity responses
-        for node in self.memory.values():
-            if self.delete_duplicates:
-                node.deduplicate()
-            node.prune_replies(self.max_responses)
+                self.memory_bank.prune()
 
-        # Evict low-usage words if max memory size is exceeded
-        if len(self.memory) > self.max_words:
-            total_uses = sum(node.uses for node in self.memory.values())
-            avg_uses = total_uses / len(self.memory) if self.memory else 0
+                raw_input = input("You: ").strip()
 
-            for key in list(self.memory.keys()):
-                if len(self.memory) <= self.max_words:
-                    break
-                if self.memory[key].uses <= avg_uses:
-                    del self.memory[key]
+                if raw_input.startswith("#"):
+                    cmd = raw_input.lower()
+                    if "#quit" in cmd:
+                        break
+                    elif "#help" in cmd:
+                        print(self.HELP_MESSAGE)
+                    continue
 
-    def talk(self):
-        previous_response_tokens = []
+                input_tokens = raw_input.lower().split()
+                if not input_tokens:
+                    continue
 
-        while True:
-            if self.save_enabled:
-                self.session_count += 1
-                if self.session_count >= self.save_interval:
-                    self.session_count = 0
-                    self.save_memory()
+                self.memory_bank.associate_words(
+                    previous_response_tokens, input_tokens
+                )
 
-            self.prune_memory()
+                response_tokens: List[str] = []
+                for word in input_tokens:
+                    node = self.memory_bank.get_or_create(word)
+                    response_tokens.extend(node.generate_associations())
 
-            raw_input = input("You: ").strip()
+                answer = (
+                    " ".join(response_tokens) if response_tokens else "..."
+                )
+                print(f"Babbler: {answer}")
+                previous_response_tokens = answer.split()
 
-            if "#" in raw_input:
-                if "quit" in raw_input:
-                    self.save_memory()
-                    break
-                if "help" in raw_input:
-                    print(self.HELP_MESSAGE)
-                continue
-
-            input_tokens = raw_input.split()
-            if not input_tokens:
-                continue
-
-            # Update associations between previous output and current input
-            for prev_token in previous_response_tokens:
-                if prev_token in self.memory:
-                    self.memory[prev_token].add_replies(input_tokens)
-
-            # Learn new input words and generate responses
-            response_tokens = []
-            for word in input_tokens:
-                if word not in self.memory:
-                    self.memory[word] = WordNode(word)
-
-                generated_chunk = self.memory[word].generate_response()
-                if generated_chunk:
-                    response_tokens.append(generated_chunk)
-
-            answer = (
-                " ".join(response_tokens) if response_tokens else "..."
-            )
-            print(f"Babbler: {answer}")
-            previous_response_tokens = answer.split()
+        finally:
+            self.memory_bank.save()
 
 
 if __name__ == "__main__":

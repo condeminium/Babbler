@@ -2,8 +2,9 @@ import os
 import pathlib
 import pickle
 import random
-from typing import Dict, List, Optional
 import threading
+from collections import defaultdict, Counter
+from typing import Dict, List, Tuple, Optional
 
 try:
     import pyttsx3
@@ -13,8 +14,6 @@ except ImportError:
 
 
 class TTSHandler:
-    """Handles TTS initialisation and runs on separate thread to main loop."""
-
     def __init__(self, enabled: bool = True, rate: int = 175, volume: float = 1.0):
         self.enabled = enabled and HAS_PYTTSX3
         self.rate = rate
@@ -24,7 +23,6 @@ class TTSHandler:
             print("[Warning] 'pyttsx3' module not found. Run 'pip install pyttsx3' to enable TTS.")
 
     def _speak_thread(self, text: str) -> None:
-        """Instantiates TTS thread."""
         try:
             engine = pyttsx3.init()
             engine.setProperty("rate", self.rate)
@@ -36,7 +34,6 @@ class TTSHandler:
             print(f"[TTS Error] {e}")
 
     def speak(self, text: str) -> None:
-        """Speak the string asynchronously if TTS is enabled and text is valid."""
         if not self.enabled:
             return
 
@@ -47,119 +44,88 @@ class TTSHandler:
         thread = threading.Thread(target=self._speak_thread, args=(clean_text,), daemon=True)
         thread.start()
 
-class WordNode:
-    """Tracks a single word entry and its reply associations."""
 
-    def __init__(self, name: str, initial_replies: Optional[List[str]] = None):
-        self.name: str = name
-        self.replies: List[str] = (
-            initial_replies if initial_replies is not None else [name]
-        )
-        self.uses: int = 0
+class MarkovChain:
+    START_TOKEN = "[START]"
+    END_TOKEN = "[END]"
 
-    def add_associations(self, words: List[str]) -> None:
-        self.replies.extend(words)
+    def __init__(self, order: int = 2):
+        self.order = order
+        self.chain: Dict[Tuple[str, ...], Counter] = defaultdict(Counter)
 
-    def deduplicate(self) -> None:
-        self.replies = list(set(self.replies))
+    def train(self, tokens: List[str]) -> None:
+        if len(tokens) < 1:
+            return
 
-    def limit_replies(self, max_replies: int) -> None:
-        if len(self.replies) > max_replies:
-            self.replies = random.sample(self.replies, max_replies)
+        padded_tokens = ([self.START_TOKEN] * self.order) + tokens + [self.END_TOKEN]
 
-    def generate_associations(self, max_samples: int = 3) -> List[str]:
-        if not self.replies:
-            return []
-        count = random.randint(0, max_samples)
-        self.uses += count
-        return [random.choice(self.replies) for _ in range(count)]
+        for i in range(len(padded_tokens) - self.order):
+            state = tuple(padded_tokens[i : i + self.order])
+            next_word = padded_tokens[i + self.order]
+            self.chain[state][next_word] += 1
+
+    def generate(self, seed_tokens: Optional[List[str]] = None, max_length: int = 30) -> str:
+        if not self.chain:
+            return "..."
+
+        state = None
+        if seed_tokens and len(seed_tokens) >= self.order:
+            potential_state = tuple(seed_tokens[-self.order:])
+            if potential_state in self.chain:
+                state = potential_state
+
+        if state is None:
+            state = tuple([self.START_TOKEN] * self.order)
+            if state not in self.chain:
+                state = random.choice(list(self.chain.keys()))
+
+        output: List[str] = []
+
+        for _ in range(max_length):
+            transitions = self.chain.get(state)
+            if not transitions:
+                break
+
+            words = list(transitions.keys())
+            weights = list(transitions.values())
+            next_word = random.choices(words, weights=weights, k=1)[0]
+
+            if next_word == self.END_TOKEN:
+                break
+
+            output.append(next_word)
+            state = tuple(list(state[1:]) + [next_word])
+
+        return " ".join(output) if output else "..."
 
 
 class StorageHandler:
-    """Manages disk persistence via pickle."""
-
     def __init__(self, file_path: pathlib.Path):
         self.file_path = file_path
 
-    def load(self) -> Dict[str, WordNode]:
+    def load(self) -> MarkovChain:
         if not self.file_path.exists():
-            print("Memory file not found. Starting with fresh memory.")
-            return {}
+            print("Memory file not found. Initializing fresh Markov model.")
+            return MarkovChain()
         try:
             with open(self.file_path, "rb") as f:
-                memory = pickle.load(f)
-            print("Memory file loaded.")
-            return memory
+                model = pickle.load(f)
+            print("Markov memory loaded successfully.")
+            return model
         except Exception as error:
-            print(f"Error loading memory file ({error}). Starting empty.")
-            return {}
+            print(f"Error loading memory ({error}). Starting empty.")
+            return MarkovChain()
 
-    def save(self, memory: Dict[str, WordNode]) -> None:
+    def save(self, model: MarkovChain) -> None:
         try:
             with open(self.file_path, "wb") as f:
-                pickle.dump(memory, f)
-            print("Memory saved successfully.")
+                pickle.dump(model, f)
+            print("Markov memory saved successfully.")
         except Exception as error:
             print(f"Error saving memory: {error}")
 
 
-class MemoryBank:
-    """Handles memory pruning and word associations."""
-
-    def __init__(
-        self,
-        storage_path: pathlib.Path,
-        max_words: int = 1000,
-        max_responses_per_word: int = 15,
-        deduplicate: bool = True,
-    ):
-        self.storage = StorageHandler(storage_path)
-        self.max_words = max_words
-        self.max_responses_per_word = max_responses_per_word
-        self.deduplicate = deduplicate
-        self.nodes: Dict[str, WordNode] = self.storage.load()
-
-    def get_or_create(self, word: str) -> WordNode:
-        if word not in self.nodes:
-            self.nodes[word] = WordNode(word)
-        return self.nodes[word]
-
-    def associate_words(
-        self, source_words: List[str], target_words: List[str]
-    ) -> None:
-        if not target_words:
-            return
-        for word in source_words:
-            if word in self.nodes:
-                self.nodes[word].add_associations(target_words)
-
-    def prune(self) -> None:
-        for node in self.nodes.values():
-            if self.deduplicate:
-                node.deduplicate()
-            node.limit_replies(self.max_responses_per_word)
-
-        if len(self.nodes) > self.max_words:
-            total_uses = sum(node.uses for node in self.nodes.values())
-            avg_uses = total_uses / len(self.nodes) if self.nodes else 0
-            candidates = [
-                word
-                for word, node in self.nodes.items()
-                if node.uses <= avg_uses
-            ]
-
-            for word in candidates:
-                if len(self.nodes) <= self.max_words:
-                    break
-                del self.nodes[word]
-
-    def save(self) -> None:
-        self.storage.save(self.nodes)
-
-
 class Babbler:
-    """Manages bot execution loop, terminal I/O, speech, and runtime state."""
-
     HELP_MESSAGE = """Commands:
   #help - Display help
   #tts  - Toggle Text-to-Speech on/off
@@ -168,12 +134,10 @@ class Babbler:
 
     def __init__(
         self,
-        memory_file: str = "memory.data",
+        memory_file: str = "markov_memory.data",
+        order: int = 2,
         auto_save: bool = True,
-        save_interval: int = 25,
-        max_words: int = 1000,
-        max_responses_per_word: int = 15,
-        deduplicate: bool = True,
+        save_interval: int = 10,
         enable_tts: bool = True,
     ):
         self.auto_save = auto_save
@@ -181,14 +145,13 @@ class Babbler:
         self.session_count = 0
 
         self._clear_screen()
-        print("Babbler bot initialized.")
+        print("Markov Babbler bot initialized.")
 
-        self.memory_bank = MemoryBank(
-            storage_path=pathlib.Path(memory_file),
-            max_words=max_words,
-            max_responses_per_word=max_responses_per_word,
-            deduplicate=deduplicate,
-        )
+        self.storage = StorageHandler(pathlib.Path(memory_file))
+        self.markov = self.storage.load()
+        if not hasattr(self.markov, "order"):
+            self.markov.order = order
+
         self.tts = TTSHandler(enabled=enable_tts)
 
     @staticmethod
@@ -204,9 +167,7 @@ class Babbler:
                     self.session_count += 1
                     if self.session_count >= self.save_interval:
                         self.session_count = 0
-                        self.memory_bank.save()
-
-                self.memory_bank.prune()
+                        self.storage.save(self.markov)
 
                 raw_input = input("You: ").strip()
 
@@ -226,29 +187,22 @@ class Babbler:
                 if not input_tokens:
                     continue
 
-                self.memory_bank.associate_words(
-                    previous_response_tokens, input_tokens
-                )
+                self.markov.train(input_tokens)
 
-                response_tokens: List[str] = []
-                for word in input_tokens:
-                    node = self.memory_bank.get_or_create(word)
-                    response_tokens.extend(node.generate_associations())
+                if previous_response_tokens:
+                    self.markov.train(previous_response_tokens + input_tokens)
 
-                answer = (
-                    " ".join(response_tokens) if response_tokens else "..."
-                )
+                answer = self.markov.generate(seed_tokens=input_tokens)
                 print(f"Babbler: {answer}")
 
-                # Speak the response audio
                 self.tts.speak(answer)
 
                 previous_response_tokens = answer.split()
 
         finally:
-            self.memory_bank.save()
+            self.storage.save(self.markov)
 
 
 if __name__ == "__main__":
-    bot = Babbler(enable_tts=True)
+    bot = Babbler(enable_tts=True, order=2)
     bot.talk()
